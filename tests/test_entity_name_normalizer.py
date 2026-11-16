@@ -40,6 +40,7 @@ def test_registry_import_does_not_load_a_plugin_implementation():
 def isolated_registry(monkeypatch, lightrag_caplog):
     monkeypatch.setattr(normalizer, "_REGISTRY", {})
     monkeypatch.setattr(normalizer, "_DUPLICATES", set())
+    monkeypatch.setattr(normalizer, "_active", None)
     monkeypatch.setattr(normalizer, "_loaded", False)
     monkeypatch.setattr(normalizer, "_failures", [])
     monkeypatch.setattr(normalizer, "entry_points", lambda **kwargs: [])
@@ -286,7 +287,7 @@ def test_idempotence_is_judged_on_the_plugins_own_output(monkeypatch):
     assert seen == ["  X  ", "X"]
 
 
-def test_a_plugin_exception_propagates_unchanged(monkeypatch):
+def test_a_plugin_exception_is_raised_as_the_typed_error(monkeypatch):
     class Boom(Exception):
         pass
 
@@ -295,8 +296,61 @@ def test_a_plugin_exception_propagates_unchanged(monkeypatch):
 
     bound = selected(monkeypatch, normalize)
 
-    with pytest.raises(Boom, match="plugin bug"):
+    with pytest.raises(
+        normalizer.EntityNameNormalizerError, match="'acme'.*Boom.*plugin bug"
+    ) as raised:
         bound("x")
+    assert isinstance(raised.value.__cause__, Boom)
+
+
+def test_an_exception_in_the_idempotence_call_is_raised_as_the_typed_error(
+    monkeypatch,
+):
+    calls = []
+
+    def normalize(name):
+        calls.append(name)
+        if len(calls) > 1:
+            raise KeyError("second call")
+        return name.strip()
+
+    bound = selected(monkeypatch, normalize)
+
+    with pytest.raises(normalizer.EntityNameNormalizerError, match="KeyError"):
+        bound(" x ")
+
+
+# --- the process-wide application point -------------------------------------
+
+
+def test_apply_is_the_identity_without_an_active_normalizer():
+    assert normalizer.get_active_entity_name_normalizer() is None
+    assert normalizer.apply_entity_name_normalizer("118ème RI") == "118ème RI"
+
+
+def test_apply_uses_the_active_normalizer(monkeypatch):
+    bound = selected(monkeypatch, str.lower)
+    normalizer.set_active_entity_name_normalizer(bound)
+
+    assert normalizer.get_active_entity_name_normalizer() is bound
+    assert normalizer.apply_entity_name_normalizer("ACME") == "acme"
+
+
+def test_apply_can_be_turned_off(monkeypatch):
+    normalizer.set_active_entity_name_normalizer(selected(monkeypatch, str.lower))
+    normalizer.set_active_entity_name_normalizer(None)
+
+    assert normalizer.apply_entity_name_normalizer("ACME") == "ACME"
+
+
+@pytest.mark.parametrize("empty", ["", "  "])
+def test_apply_does_not_call_the_normalizer_on_an_empty_name(monkeypatch, empty):
+    def normalize(name):
+        pytest.fail("the normalizer was called on an empty name")
+
+    normalizer.set_active_entity_name_normalizer(selected(monkeypatch, normalize))
+
+    assert normalizer.apply_entity_name_normalizer(empty) == empty
 
 
 # --- discovery --------------------------------------------------------------

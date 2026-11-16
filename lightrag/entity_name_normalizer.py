@@ -19,11 +19,23 @@ Contract for a normalizer, enforced here where it can be checked:
   never truncated again: a second cut would silently alter a canonical name;
 * it is idempotent, ``normalize(normalize(x)) == normalize(x)``, because stored
   names pass through it again (graph API, rebuild after a deletion);
-* an empty result keeps the name it was given, and is logged.
+* an empty result keeps the name it was given, and is logged;
+* an exception it raises is re-raised as :class:`EntityNameNormalizerError`,
+  chained to the original. Callers on the extraction path wrap each item in a
+  broad ``except Exception: continue``, which would drop the entity with only
+  a warning; the typed error is the one they let through, so the document
+  fails instead.
 
 It must also be deterministic, free of side effects, and may only merge names
 that used to differ, including from one version of the normalizer to the next.
 That last property cannot be checked at run time.
+
+**Where it runs.** The selected normalizer is process-wide, set once at
+startup with :func:`set_active_entity_name_normalizer`, and applied through
+:func:`apply_entity_name_normalizer`, the single application point. It runs
+AFTER the length cap and the final space pass, never before: a step that
+shortens a name, run before the cap, gives two spellings different keys where
+the cap gave them one, and a rebuild then drops the facts of one of them.
 
 This module logs through :mod:`logging` and imports nothing heavy so that
 ``lightrag.utils`` can use it without a circular import.
@@ -157,8 +169,9 @@ class EntityNameNormalizer:
     """A resolved normalizer: the implementation plus its provenance.
 
     Calling it applies the implementation and checks the contract documented
-    in the module docstring. An exception raised by the implementation
-    propagates unchanged; it is never replaced by the name it was given.
+    in the module docstring. An exception raised by the implementation is
+    re-raised as :class:`EntityNameNormalizerError`; it is never replaced by
+    the name it was given.
     """
 
     def __init__(
@@ -177,8 +190,16 @@ class EntityNameNormalizer:
             f"(version {self.spec.version}, {self.origin})"
         )
 
+    def _apply(self, name: str) -> str:
+        try:
+            return self.implementation(name)
+        except Exception as exc:
+            raise EntityNameNormalizerError(
+                f"{self._describe()} raised {type(exc).__name__} for {name!r}: {exc}"
+            ) from exc
+
     def __call__(self, name: str) -> str:
-        result = self.implementation(name)
+        result = self._apply(name)
         if not isinstance(result, str):
             raise EntityNameNormalizerError(
                 f"{self._describe()} returned {type(result).__name__}, not str, "
@@ -202,13 +223,48 @@ class EntityNameNormalizer:
                 f"{DEFAULT_ENTITY_NAME_MAX_BYTES} byte limit; the result is not "
                 "truncated"
             )
-        again = self.implementation(result)
+        again = self._apply(result)
         if again != result:
             raise EntityNameNormalizerError(
                 f"{self._describe()} is not idempotent: it maps {name!r} to "
                 f"{result!r} and then {result!r} to {again!r}"
             )
         return result
+
+
+_active: EntityNameNormalizer | None = None
+
+
+def set_active_entity_name_normalizer(
+    normalizer: EntityNameNormalizer | None,
+) -> None:
+    """Make ``normalizer`` the process-wide one; ``None`` turns it off.
+
+    Called once at startup, before any entity name is normalized. Changing it
+    on a workspace that already holds entities is a change of normalizer, with
+    the consequences described in the entity name normalization section of
+    ``docs/design/PurgeRecoveryContract.md``.
+    """
+    global _active
+    _active = normalizer
+
+
+def get_active_entity_name_normalizer() -> EntityNameNormalizer | None:
+    """The process-wide normalizer, or ``None`` when none is selected."""
+    return _active
+
+
+def apply_entity_name_normalizer(name: str) -> str:
+    """The single application point: ``name`` as the active normalizer keys it.
+
+    Returns ``name`` unchanged when no normalizer is active or the name is
+    empty. Callers must pass a name that has already been capped and put
+    through the built-in rules; see the module docstring.
+    """
+    normalizer = _active
+    if normalizer is None or not name.strip():
+        return name
+    return normalizer(name)
 
 
 def resolve_entity_name_normalizer(name: str | None) -> EntityNameNormalizer | None:

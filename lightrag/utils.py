@@ -44,6 +44,7 @@ import numpy as np
 from dotenv import load_dotenv
 import json_repair
 
+from lightrag.entity_name_normalizer import apply_entity_name_normalizer
 from lightrag.exceptions import (
     ChunkBlockMatchError,
     CommitBookkeepingError,
@@ -6035,10 +6036,18 @@ def normalize_entity_name(input_text: str, *, final_space_pass: bool = True) -> 
     ``final_space_pass=False`` and run :func:`remove_spaces_next_to_chinese`
     on the capped result, as the extraction parsers in ``lightrag.operate`` do
     (see :func:`normalize_extracted_info`).
+
+    With ``final_space_pass=True`` the name is complete, and the selected
+    entity-name normalizer, if any, is applied to it last. With ``False`` it is
+    not: the capping caller applies the normalizer itself, after the cap (see
+    :mod:`lightrag.entity_name_normalizer`).
     """
-    return sanitize_and_normalize_extracted_text(
+    normalized = sanitize_and_normalize_extracted_text(
         input_text, remove_inner_quotes=True, final_space_pass=final_space_pass
     )
+    if not final_space_pass:
+        return normalized
+    return apply_entity_name_normalizer(normalized)
 
 
 def normalize_extracted_info(

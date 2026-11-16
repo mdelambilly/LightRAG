@@ -12,6 +12,10 @@ import json_repair
 from typing import Any, AsyncIterator, overload, Literal, Callable, Awaitable
 from collections import Counter, defaultdict
 
+from lightrag.entity_name_normalizer import (
+    EntityNameNormalizerError,
+    apply_entity_name_normalizer,
+)
 from lightrag.exceptions import (
     IndexFlushError,
     PipelineCancelledException,
@@ -252,7 +256,8 @@ def _truncate_entity_identifier(
 def _finalize_extracted_identifier(
     identifier: str, chunk_key: str, identifier_role: str
 ) -> str:
-    """Cap an extracted entity identifier, then run the final space pass.
+    """Cap an extracted entity identifier, run the final space pass, then the
+    selected entity-name normalizer.
 
     ``identifier`` must come from ``normalize_entity_name(...,
     final_space_pass=False)``. The pass runs after the cap, never before it:
@@ -260,11 +265,17 @@ def _finalize_extracted_identifier(
     different keys where the cut of the previous rules gave them one, which
     breaks the merge-only rule of :func:`normalize_extracted_info`. Running it
     on the capped key keeps the new key a function of the stored one.
+
+    The normalizer, when one is selected, runs last for the same reason: on the
+    capped key its result is still a function of the stored key. A result over
+    the entity-name limits raises
+    :class:`~lightrag.entity_name_normalizer.EntityNameNormalizerError` and is
+    never cut again.
     """
     capped = _truncate_entity_identifier(
         identifier, DEFAULT_ENTITY_NAME_MAX_LENGTH, chunk_key, identifier_role
     )
-    return remove_spaces_next_to_chinese(capped)
+    return apply_entity_name_normalizer(remove_spaces_next_to_chinese(capped))
 
 
 def _truncate_section_context(
@@ -1042,6 +1053,10 @@ async def _process_json_extraction_result(
             )
             maybe_nodes[truncated_name].append(node_data)
 
+        except EntityNameNormalizerError:
+            # A selected normalizer that breaks its contract fails the
+            # document; dropping the entity with a warning would lose it.
+            raise
         except Exception as e:
             logger.warning(
                 f"{chunk_key}: Failed to process entity from JSON result: {e}"
@@ -1107,7 +1122,7 @@ async def _process_json_extraction_result(
                 chunk_key,
                 "Relation entity",
             )
-            # The cap and the final space pass can make the endpoints equal.
+            # The cap, the final space pass and the normalizer can make the endpoints equal.
             if truncated_source == truncated_target:
                 logger.debug(
                     f"{chunk_key}: Source and target are the same: '{truncated_source}'"
@@ -1126,6 +1141,9 @@ async def _process_json_extraction_result(
             )
             maybe_edges[(truncated_source, truncated_target)].append(edge_data)
 
+        except EntityNameNormalizerError:
+            # See the entity loop above: fail the document, never drop the item.
+            raise
         except Exception as e:
             logger.warning(
                 f"{chunk_key}: Failed to process relationship from JSON result: {e}"
@@ -1671,7 +1689,7 @@ async def _process_extraction_result(
                 chunk_key,
                 "Relation entity",
             )
-            # The cap and the final space pass can make the endpoints equal.
+            # The cap, the final space pass and the normalizer can make the endpoints equal.
             if truncated_source == truncated_target:
                 logger.debug(
                     f"Relationship source and target are the same in: {record_attributes}"
