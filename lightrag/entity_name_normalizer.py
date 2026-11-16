@@ -402,6 +402,22 @@ def load_and_resolve_entity_name_normalizer(
     return selected
 
 
+def select_entity_name_normalizer(name: str | None) -> EntityNameNormalizer | None:
+    """Resolve the operator's selection and make it the process-wide normalizer.
+
+    The one call a process makes at startup: the server with its
+    ``CUSTOM_ENTITY_NAME_NORMALIZER`` / ``--custom-entity-name-normalizer``
+    value, and any offline tool that replays extraction with the same
+    environment variable. An unset ``name`` turns the normalizer off, so a
+    process that selects twice ends with the last selection. An invalid
+    selection raises ``ValueError`` and leaves the active normalizer as it was.
+    """
+    selected = load_and_resolve_entity_name_normalizer(name)
+    set_active_entity_name_normalizer(selected)
+    log_entity_name_normalizer_selection(selected)
+    return selected
+
+
 def log_entity_name_normalizer_selection(
     selected: EntityNameNormalizer | None,
 ) -> None:

@@ -376,6 +376,11 @@ def parse_args() -> argparse.Namespace:
         default=get_env_value("CUSTOM_CHUNKER", ""),
         help="Registered third-party chunker name (CUSTOM_CHUNKER); not a Python import path",
     )
+    parser.add_argument(
+        "--custom-entity-name-normalizer",
+        default=get_env_value("CUSTOM_ENTITY_NAME_NORMALIZER", ""),
+        help="Registered third-party entity-name normalizer name (CUSTOM_ENTITY_NAME_NORMALIZER); not a Python import path",
+    )
 
     # Server configuration
     parser.add_argument(

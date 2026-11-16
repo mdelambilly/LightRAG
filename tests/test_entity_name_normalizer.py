@@ -353,6 +353,40 @@ def test_apply_does_not_call_the_normalizer_on_an_empty_name(monkeypatch, empty)
     assert normalizer.apply_entity_name_normalizer(empty) == empty
 
 
+# --- startup selection ------------------------------------------------------
+
+
+def test_select_activates_and_returns_the_normalizer(monkeypatch):
+    install_impl(monkeypatch, str.lower)
+    normalizer.register_entity_name_normalizer(spec())
+
+    chosen = normalizer.select_entity_name_normalizer("acme")
+
+    assert chosen is normalizer.get_active_entity_name_normalizer()
+    assert normalizer.apply_entity_name_normalizer("ACME") == "acme"
+
+
+def test_select_with_no_name_turns_the_normalizer_off(monkeypatch):
+    install_impl(monkeypatch, str.lower)
+    normalizer.register_entity_name_normalizer(spec())
+    normalizer.select_entity_name_normalizer("acme")
+
+    assert normalizer.select_entity_name_normalizer("") is None
+
+    assert normalizer.get_active_entity_name_normalizer() is None
+
+
+def test_an_invalid_selection_leaves_the_active_normalizer_alone(monkeypatch):
+    install_impl(monkeypatch, str.lower)
+    normalizer.register_entity_name_normalizer(spec())
+    chosen = normalizer.select_entity_name_normalizer("acme")
+
+    with pytest.raises(ValueError, match="unknown normalizer 'missing'"):
+        normalizer.select_entity_name_normalizer("missing")
+
+    assert normalizer.get_active_entity_name_normalizer() is chosen
+
+
 # --- discovery --------------------------------------------------------------
 
 

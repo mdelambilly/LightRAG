@@ -65,6 +65,7 @@ from lightrag.parser.docx.smart_heading.nlp import SmartHeadingNLPError
 from lightrag.parser.plugins import load_third_party_parsers
 from lightrag.chunker.plugins import load_and_resolve_chunker
 from lightrag.chunker.registry import log_chunker_selection
+from lightrag.entity_name_normalizer import select_entity_name_normalizer
 from lightrag.parser.routing import (
     parser_rules_from_env,
     validate_parser_routing_config,
@@ -1598,6 +1599,24 @@ def create_app(args):
         ASCIIColors.red("=" * 80 + "\n", markup=False)
         raise
     log_chunker_selection(selected_chunker)
+    # An unselectable entity-name normalizer aborts startup for the same reason:
+    # the deployment would otherwise key its entities without it, and names it
+    # meant to merge would become separate nodes. The selection is process-wide
+    # and is set here, before any entity name is normalized.
+    try:
+        select_entity_name_normalizer(
+            getattr(args, "custom_entity_name_normalizer", "")
+        )
+    except ValueError as exc:
+        # markup=False: ASCIIColors interprets "[...]" as rich markup tags.
+        ASCIIColors.red("\n" + "=" * 80, markup=False)
+        ASCIIColors.red(
+            "ERROR: invalid CUSTOM_ENTITY_NAME_NORMALIZER selection", markup=False
+        )
+        ASCIIColors.red("=" * 80, markup=False)
+        ASCIIColors.red(str(exc), markup=False)
+        ASCIIColors.red("=" * 80 + "\n", markup=False)
+        raise
     validate_parser_routing_config()
     # Fail fast when DOCX_SMART_HEADING / a LIGHTRAG_PARSER rule enables
     # smart_heading but the pinned spaCy models are missing — surfacing the

@@ -35,6 +35,7 @@ from dotenv import load_dotenv
 
 from lightrag.base import CURSOR_END, CURSOR_START, DocStatus
 from lightrag.constants import DEFAULT_WORKING_DIR, RELATION_NO_EVIDENCE_SOURCE_IDS
+from lightrag.entity_name_normalizer import select_entity_name_normalizer
 from lightrag.utils import (
     EmbeddingFunc,
     has_chunk_tracking_row,
@@ -1251,6 +1252,16 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     load_dotenv(dotenv_path=".env", override=False)
     setup_logger("lightrag", level="INFO")
+    # This tool replays cached extraction results, which keys entity names
+    # through the selected entity-name normalizer. Without the server's
+    # selection it would rebuild names the normalizer would have merged.
+    try:
+        select_entity_name_normalizer(
+            os.environ.get("CUSTOM_ENTITY_NAME_NORMALIZER", "")
+        )
+    except ValueError as exc:
+        logger.error(f"Invalid CUSTOM_ENTITY_NAME_NORMALIZER selection: {exc}")
+        raise SystemExit(1)
     if not asyncio.run(run(_parse_args())):
         raise SystemExit(1)
 
